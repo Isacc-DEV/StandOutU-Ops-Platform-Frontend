@@ -13,8 +13,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
 
 const defaultAppPermissions = () => ({
   manageAll: false,
-  manageProfiles: [],
-  checkProfiles: [],
+  manageApplications: [],
+  checkApplications: [],
   checkAll: false
 });
 
@@ -50,8 +50,8 @@ const normalizeAppPermissions = value => {
     if (value === 'all') {
       return {
         manageAll: true,
-        manageProfiles: [],
-        checkProfiles: [],
+        manageApplications: [],
+        checkApplications: [],
         checkAll: false
       };
     }
@@ -60,8 +60,10 @@ const normalizeAppPermissions = value => {
   const perms = defaultAppPermissions();
   if (typeof value === 'object' && value) {
     perms.manageAll = !!(value.manageAll ?? value.viewAll);
-    perms.manageProfiles = toStringIdArray(value.manageProfiles ?? value.viewProfiles);
-    perms.checkProfiles = toStringIdArray(value.checkProfiles);
+    perms.manageApplications = toStringIdArray(
+      value.manageApplications ?? value.manageProfiles ?? value.viewProfiles
+    );
+    perms.checkApplications = toStringIdArray(value.checkApplications ?? value.checkProfiles);
     perms.checkAll = !!value.checkAll;
   }
   return perms;
@@ -81,8 +83,8 @@ const decorateAccount = account => {
   const currentPermissions = {
     applications: {
       ...normalizedApplications,
-      manageProfiles: [...normalizedApplications.manageProfiles],
-      checkProfiles: [...normalizedApplications.checkProfiles]
+      manageApplications: [...normalizedApplications.manageApplications],
+      checkApplications: [...normalizedApplications.checkApplications]
     },
     profiles: profilesPermission
   };
@@ -170,8 +172,8 @@ export default function Accounts() {
           return {
             applications: {
               ...normalizedApplications,
-              manageProfiles: [...normalizedApplications.manageProfiles],
-              checkProfiles: [...normalizedApplications.checkProfiles]
+              manageApplications: [...normalizedApplications.manageApplications],
+              checkApplications: [...normalizedApplications.checkApplications]
             },
             profiles: acc.permissions?.profiles || 'view'
           };
@@ -234,11 +236,11 @@ export default function Accounts() {
     setAccountState(prev =>
       prev.map(acc => {
         if (acc.id !== id) return acc;
-        const current = acc.permissions?.applications || defaultAppPermissions();
+        const currentNormalized = normalizeAppPermissions(acc.permissions?.applications);
         const base = {
-          ...current,
-          manageProfiles: [...(current.manageProfiles || current.viewProfiles || [])],
-          checkProfiles: [...(current.checkProfiles || [])]
+          ...currentNormalized,
+          manageApplications: [...currentNormalized.manageApplications],
+          checkApplications: [...currentNormalized.checkApplications]
         };
         const updated = updater(base);
         const normalized = normalizeAppPermissions(updated);
@@ -248,8 +250,8 @@ export default function Accounts() {
             ...acc.permissions,
             applications: {
               ...normalized,
-              manageProfiles: [...normalized.manageProfiles],
-              checkProfiles: [...normalized.checkProfiles]
+              manageApplications: [...normalized.manageApplications],
+              checkApplications: [...normalized.checkApplications]
             }
           },
           __changes: { ...acc.__changes, permissions: true }
@@ -281,7 +283,7 @@ export default function Accounts() {
     updateApplicationPermissions(id, current => ({
       ...current,
       manageAll: !!value,
-      ...(value ? { manageProfiles: [] } : {})
+      ...(value ? { manageApplications: [] } : {})
     }));
   };
 
@@ -289,7 +291,7 @@ export default function Accounts() {
     updateApplicationPermissions(id, current => ({
       ...current,
       checkAll: !!value,
-      ...(value ? { checkProfiles: [] } : {})
+      ...(value ? { checkApplications: [] } : {})
     }));
   };
 
@@ -358,16 +360,17 @@ export default function Accounts() {
     }
     const currentPermissions = account.permissions || {};
     const originalPermissions = original.permissions || {};
-    const currentApps = currentPermissions.applications || defaultAppPermissions();
-    const originalApps = originalPermissions.applications || defaultAppPermissions();
+    const currentApps = normalizeAppPermissions(currentPermissions.applications);
+    const originalApps = normalizeAppPermissions(originalPermissions.applications);
+    const currentManageList = currentApps.manageApplications;
+    const originalManageList = originalApps.manageApplications;
+    const currentCheckList = currentApps.checkApplications;
+    const originalCheckList = originalApps.checkApplications;
     const applicationsChanged =
       currentApps.manageAll !== originalApps.manageAll ||
       currentApps.checkAll !== originalApps.checkAll ||
-      !arraysEqual(
-        currentApps.manageProfiles || currentApps.viewProfiles || [],
-        originalApps.manageProfiles || originalApps.viewProfiles || []
-      ) ||
-      !arraysEqual(currentApps.checkProfiles || [], originalApps.checkProfiles || []);
+      !arraysEqual(currentManageList, originalManageList) ||
+      !arraysEqual(currentCheckList, originalCheckList);
     const profilePermissionChanged =
       currentPermissions.profiles !== originalPermissions.profiles;
     if (account.__changes.permissions && (applicationsChanged || profilePermissionChanged)) {
@@ -376,9 +379,8 @@ export default function Accounts() {
           ? {
               applications: {
                 ...currentApps,
-                checkAll: currentApps.checkAll,
-                manageProfiles: [...(currentApps.manageProfiles || [])],
-                checkProfiles: [...(currentApps.checkProfiles || [])]
+                manageApplications: [...currentManageList],
+                checkApplications: [...currentCheckList]
               }
             }
           : {}),
@@ -571,7 +573,7 @@ export default function Accounts() {
                         ) : (
                           renderApplicationSelector(
                             account,
-                            'manageProfiles',
+                            'manageApplications',
                             isSaving || profilesLoading
                           )
                         )}
@@ -596,7 +598,7 @@ export default function Accounts() {
                         ) : (
                           renderApplicationSelector(
                             account,
-                            'checkProfiles',
+                            'checkApplications',
                             isSaving || profilesLoading
                           )
                         )}

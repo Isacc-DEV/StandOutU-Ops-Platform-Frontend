@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import StatCard from '../components/StatCard.jsx';
 
@@ -19,21 +19,32 @@ export default function Dashboard() {
     );
   }
 
-  const { totalApps, appsByBidder, interviewsUpcoming, pipelineCounts, stepAgg } = data;
-  const pipelineMap = Object.fromEntries(pipelineCounts.map(p => [p._id, p.count]));
+  const {
+    totalApps = 0,
+    appsByBidder = [],
+    interviewsUpcoming = 0,
+    checkStatusCounts = [],
+    stepAgg = []
+  } = data;
+  const checkStatusMap = Object.fromEntries(
+    (checkStatusCounts || []).map(item => [item._id, item.count])
+  );
+  const pendingChecks =
+    (checkStatusMap.pending || 0) + (checkStatusMap.in_review || 0);
+  const checkedCount = checkStatusMap.reviewed || 0;
 
   return (
     <div className="space-y-6">
       <header>
         <h2 className="text-lg font-semibold text-slate-900">Operations Overview</h2>
-        <p className="text-sm text-slate-500">Monitor bidder throughput, interview health, and pipeline velocity.</p>
+        <p className="text-sm text-slate-500">Monitor bidder throughput, interview health, and check progress.</p>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard title="Total Applications" value={totalApps} />
         <StatCard title="Upcoming Interviews" value={interviewsUpcoming} />
-        <StatCard title="Hired" value={pipelineMap.hired || 0} hint="pipeline status" />
-        <StatCard title="Rejected" value={pipelineMap.rejected || 0} hint="pipeline status" />
+        <StatCard title="Checks Outstanding" value={pendingChecks} hint="check status" />
+        <StatCard title="Reviewed" value={checkedCount} hint="check status" />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-2">

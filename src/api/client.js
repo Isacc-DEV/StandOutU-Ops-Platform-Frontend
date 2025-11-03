@@ -12,22 +12,40 @@ const parseError = async res => {
 export const api = {
   token: null,
   _onUnauthorized: null,
+  _pendingGetRequests: new Map(),
   setToken(t) {
+    if (this.token !== t) {
+      this._pendingGetRequests.clear();
+    }
     this.token = t;
   },
   onUnauthorized(handler) {
     this._onUnauthorized = typeof handler === 'function' ? handler : null;
   },
   async get(path) {
-    const res = await fetch(`${API_URL}${path}`, { headers: this.headers() });
-    if (res.status === 401) {
-      if (this._onUnauthorized) this._onUnauthorized();
-      return { error: await parseError(res), status: 401 };
+    const key = path;
+    if (this._pendingGetRequests.has(key)) {
+      return this._pendingGetRequests.get(key);
     }
-    if (!res.ok) {
-      return { error: await parseError(res), status: res.status };
-    }
-    return res.json();
+
+    const requestPromise = (async () => {
+      try {
+        const res = await fetch(`${API_URL}${path}`, { headers: this.headers() });
+        if (res.status === 401) {
+          if (this._onUnauthorized) this._onUnauthorized();
+          return { error: await parseError(res), status: 401 };
+        }
+        if (!res.ok) {
+          return { error: await parseError(res), status: res.status };
+        }
+        return res.json();
+      } finally {
+        this._pendingGetRequests.delete(key);
+      }
+    })();
+
+    this._pendingGetRequests.set(key, requestPromise);
+    return requestPromise;
   },
   async post(path, body) {
     const res = await fetch(`${API_URL}${path}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body) });

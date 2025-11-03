@@ -1,0 +1,69 @@
+# --- Dependencies ---
+node_modules/
+.pnp/
+.pnp.cjs
+.pnpm-store/
+.bun/
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+
+# --- Build outputs ---
+build/
+dist/
+.tmp/
+.temp/
+.cache/
+.vite/
+.next/          # if using Next.js in a React monorepo
+out/
+
+# --- Testing ---
+coverage/
+.nyc_output/
+.jest/
+.eslintcache
+
+# --- Env & config (keep local only) ---
+.env
+.env.*
+!.env.example
+*.local
+
+# --- Logs ---
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Package manager caches ---
+.npm/
+.yarn-cache/
+.yarnrc.yml
+.bun-install/
+
+# --- Editor & OS files ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# --- Storybook ---
+storybook-static/
+.out/
+
+# --- Misc ---
+*.tsbuildinfo
+eslint_report.json
+stylelint-report.json
+
+# --- Docker ---
+docker-compose.override.yml

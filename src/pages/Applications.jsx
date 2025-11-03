@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth } from '../hooks/useAuth.js';
 
-const EDITABLE_KEYS = ['company', 'roleTitle', 'jobUrl', 'status', 'notes', 'profileId', 'bidderId', 'resumeId'];
+const EDITABLE_KEYS = ['company', 'roleTitle', 'jobUrl', 'bidderNote', 'profileId', 'bidderId', 'resumeId'];
 const RELATION_KEYS = new Set(['profileId', 'bidderId', 'resumeId']);
 
 const normalizeRow = doc => ({
@@ -11,8 +11,9 @@ const normalizeRow = doc => ({
   company: doc.company ?? '',
   roleTitle: doc.roleTitle ?? '',
   jobUrl: doc.jobUrl ?? '',
-  status: doc.status ?? 'applied',
-  notes: doc.notes ?? '',
+  bidderNote: doc.bidderNote ?? '',
+  checkNote: doc.checkNote ?? '',
+  checkResult: doc.checkResult ?? 'pending',
   resumeId:
     typeof doc.resumeId === 'object' && doc.resumeId !== null ? doc.resumeId._id : doc.resumeId ?? '',
   resume:
@@ -65,8 +66,8 @@ const formatDate = value => {
 
 const defaultAppPermissions = () => ({
   manageAll: false,
-  manageProfiles: [],
-  checkProfiles: []
+  manageApplications: [],
+  checkApplications: []
 });
 
 const toStringIdArray = value => {
@@ -93,18 +94,39 @@ const normalizeAppPermissions = value => {
   if (!value) return defaultAppPermissions();
   if (typeof value === 'string') {
     if (value === 'all') {
-      return { manageAll: true, manageProfiles: [], checkProfiles: [] };
+      return { manageAll: true, manageApplications: [], checkApplications: [] };
     }
     return defaultAppPermissions();
   }
   if (typeof value === 'object') {
     return {
       manageAll: !!(value.manageAll ?? value.viewAll),
-      manageProfiles: toStringIdArray(value.manageProfiles ?? value.viewProfiles),
-      checkProfiles: toStringIdArray(value.checkProfiles)
+      manageApplications: toStringIdArray(
+        value.manageApplications ?? value.manageProfiles ?? value.viewProfiles
+      ),
+      checkApplications: toStringIdArray(value.checkApplications ?? value.checkProfiles)
     };
   }
   return defaultAppPermissions();
+};
+
+const areArraysEqual = (a, b) => {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+};
+
+const isSameAppPermissions = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.manageAll !== b.manageAll) return false;
+  if (!areArraysEqual(a.manageApplications, b.manageApplications)) return false;
+  if (!areArraysEqual(a.checkApplications, b.checkApplications)) return false;
+  return true;
 };
 
 const formatCheckStatusLabel = status =>
@@ -113,13 +135,26 @@ const formatCheckStatusLabel = status =>
     .replace(/_/g, ' ')
     .replace(/\b\w/g, char => char.toUpperCase());
 
+const formatCheckResultLabel = result => {
+  if (!result) return '';
+  if (result === 'ok') return 'OK';
+  return result
+    .toString()
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+};
+
 export default function Applications() {
   const { user, loading: authLoading } = useAuth();
-  const userAppPermissions = normalizeAppPermissions(user?.permissions?.applications);
+  const userApplicationsPermissionSource = user?.permissions?.applications;
+  const userAppPermissions = useMemo(
+    () => normalizeAppPermissions(userApplicationsPermissionSource),
+    [userApplicationsPermissionSource]
+  );
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState(() => ({
-    pipeline: [],
     checkStatuses: [],
+    checkResults: [],
     profiles: [],
     bidders: [],
     resumesByProfile: {},
@@ -127,6 +162,7 @@ export default function Applications() {
     capabilities: {}
   }));
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState(null);
   const [editingRowId, setEditingRowId] = useState(null);
   const [activeEditor, setActiveEditor] = useState(null); // { rowId, key }
@@ -137,19 +173,22 @@ export default function Applications() {
     rowsRef.current = rows;
   }, [rows]);
 
-  const appPermissions = meta.access || userAppPermissions;
+  const appPermissions = useMemo(
+    () => normalizeAppPermissions(meta.access || userAppPermissions),
+    [meta.access, userAppPermissions]
+  );
   const capabilities = meta.capabilities || {};
-  const manageProfiles = appPermissions.manageProfiles || [];
-  const checkProfiles = appPermissions.checkProfiles || [];
-  const hasManageProfiles = manageProfiles.length > 0;
-  const hasCheckProfiles = checkProfiles.length > 0;
+  const manageApplications = appPermissions.manageApplications;
+  const checkApplications = appPermissions.checkApplications;
+  const hasManageApplications = manageApplications.length > 0;
+  const hasCheckApplications = checkApplications.length > 0;
   const isAdmin = user?.role === 'admin';
   const canManageApplications =
     isAdmin ||
     appPermissions.manageAll ||
     appPermissions.checkAll ||
-    hasManageProfiles ||
-    hasCheckProfiles;
+    hasManageApplications ||
+    hasCheckApplications;
   const canAddApplications = canManageApplications;
   const canEditApplications = canManageApplications;
   const canCheckApplications = canManageApplications;
@@ -160,8 +199,8 @@ export default function Applications() {
     isAdmin ||
     appPermissions.manageAll ||
     appPermissions.checkAll ||
-    hasManageProfiles ||
-    hasCheckProfiles;
+    hasManageApplications ||
+    hasCheckApplications;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -169,18 +208,73 @@ export default function Applications() {
     try {
       const response = await api.get('/applications');
       if (response.error) throw new Error(response.error);
-      const items = (response.items || []).map(normalizeRow);
-      rowsRef.current = items;
-      setRows(items);
+      const freshRows = (response.items || []).map(normalizeRow);
+      const currentRows = Array.isArray(rowsRef.current) ? rowsRef.current : [];
+
+      const tempRows = currentRows.filter(row => row.isNew);
+      const editedRowsById = new Map(
+        currentRows
+          .filter(
+            row =>
+              !row.isNew &&
+              row._id &&
+              row.__changes &&
+              Object.keys(row.__changes).length > 0
+          )
+          .map(row => [row._id, row])
+      );
+
+      const mergedRows = freshRows.map(rowFromServer => {
+        const edited = editedRowsById.get(rowFromServer._id);
+        if (!edited) return rowFromServer;
+
+        const changedKeys = Object.keys(edited.__changes || {});
+        if (!changedKeys.length) return rowFromServer;
+
+        const nextRow = { ...rowFromServer };
+        changedKeys.forEach(key => {
+          nextRow[key] = edited[key];
+          if (key === 'profileId') {
+            nextRow.profile = edited.profile;
+            nextRow.resumeId = edited.resumeId;
+            nextRow.resume = edited.resume;
+          }
+          if (key === 'bidderId') {
+            nextRow.bidder = edited.bidder;
+          }
+          if (key === 'resumeId') {
+            nextRow.resume = edited.resume;
+          }
+        });
+        nextRow.__changes = edited.__changes;
+        return nextRow;
+      });
+
+      const nextRows = [...mergedRows, ...tempRows];
+      rowsRef.current = nextRows;
+      setRows(nextRows);
       const accessFromServer = response.meta?.access ?? appPermissions;
-      setMeta({
-        pipeline: response.meta?.pipeline || [],
-        checkStatuses: response.meta?.checkStatuses || [],
-        profiles: response.meta?.profiles || [],
-        bidders: response.meta?.bidders || [],
-        resumesByProfile: response.meta?.resumesByProfile || {},
-        access: normalizeAppPermissions(accessFromServer),
-        capabilities: response.meta?.capabilities || {}
+      setMeta(prev => {
+        const normalizedAccess = normalizeAppPermissions(accessFromServer);
+        const access = isSameAppPermissions(prev.access, normalizedAccess)
+          ? prev.access
+          : normalizedAccess;
+        const capabilitiesFromServer = response.meta?.capabilities || {};
+        const sameCapabilities =
+          prev.capabilities &&
+          Object.keys(prev.capabilities).length === Object.keys(capabilitiesFromServer).length &&
+          Object.entries(capabilitiesFromServer).every(
+            ([key, value]) => prev.capabilities[key] === value
+          );
+        return {
+          checkStatuses: response.meta?.checkStatuses || [],
+          checkResults: response.meta?.checkResults || [],
+          profiles: response.meta?.profiles || [],
+          bidders: response.meta?.bidders || [],
+          resumesByProfile: response.meta?.resumesByProfile || {},
+          access,
+          capabilities: sameCapabilities ? prev.capabilities : capabilitiesFromServer
+        };
       });
     } catch (err) {
       setError(err.message || 'Failed to load applications');
@@ -189,6 +283,7 @@ export default function Applications() {
       setRows([]);
     } finally {
       setLoading(false);
+      setHasLoadedOnce(true);
     }
   }, [appPermissions]);
 
@@ -206,18 +301,18 @@ export default function Applications() {
   }, []);
 
   const makeEmptyRow = useCallback(() => {
-    const defaultStatus = meta.pipeline?.[0] || 'applied';
     const selectedBidder =
       meta.bidders.find(b => b._id === user?.id) ||
-      (!canAssignOtherBidders && user ? { _id: user.id, name: user.name } : null);
+      (user ? { _id: user.id, name: user.name } : null);
     return {
       _id: null,
       localId: `temp-${Date.now()}`,
       company: '',
       roleTitle: '',
       jobUrl: '',
-      status: defaultStatus,
-      notes: '',
+      bidderNote: '',
+      checkNote: '',
+      checkResult: 'pending',
       resumeId: '',
       resume: null,
       checkStatus: 'pending',
@@ -233,7 +328,7 @@ export default function Applications() {
       isNew: true,
       __changes: {}
     };
-  }, [meta.pipeline, meta.bidders, user, canAssignOtherBidders]);
+  }, [meta.bidders, user, canAssignOtherBidders]);
 
   const placeholderRow = useMemo(
     () => ({
@@ -244,8 +339,11 @@ export default function Applications() {
   );
 
   const rowsWithPlaceholder = useMemo(
-    () => (canAddApplications ? [...rows, placeholderRow] : rows),
-    [rows, placeholderRow, canAddApplications]
+    () =>
+      ((hasLoadedOnce || !loading) && canAddApplications
+        ? [...rows, placeholderRow]
+        : rows),
+    [rows, placeholderRow, canAddApplications, loading, hasLoadedOnce]
   );
 
   const columns = useMemo(
@@ -253,22 +351,29 @@ export default function Applications() {
       { key: 'company', label: 'Company', type: 'text', required: true },
       { key: 'roleTitle', label: 'Position', type: 'text', required: true },
       { key: 'jobUrl', label: 'Job URL', type: 'text' },
-      { key: 'profileId', label: 'Profile', type: 'select', optionsKey: 'profiles', required: true },
-      { key: 'bidderId', label: 'Bidder', type: 'select', optionsKey: 'bidders' },
-      { key: 'status', label: 'Status', type: 'select', optionsKey: 'pipeline' },
+      {
+        key: 'profileId',
+        label: 'Profile',
+        type: 'select',
+        optionsKey: 'profiles',
+        required: true
+      },
       { key: 'resumeId', label: 'Resume', type: 'select', optionsKey: 'resumes' },
+      { key: 'bidderId', label: 'Bidder', type: 'select', optionsKey: 'bidders' },
+      { key: 'appliedAt', label: 'Applied At', type: 'static' },
+      { key: 'bidderNote', label: 'Bidder Note', type: 'textarea' },
       { key: 'checkStatus', label: 'Check Status', type: 'checkStatus' },
+      { key: 'checkResult', label: 'Check Result', type: 'checkResult' },
       { key: 'checkedBy', label: 'Checked By', type: 'static' },
       { key: 'checkedAt', label: 'Checked At', type: 'static' },
-      { key: 'notes', label: 'Notes', type: 'textarea' },
-      { key: 'appliedAt', label: 'Applied', type: 'static' },
+      { key: 'checkNote', label: 'Check Note', type: 'checkNote' },
+      { key: 'checkControls', label: 'Check', type: 'checkControls' },
       { key: '_actions', label: '', type: 'actions' }
     ],
     []
   );
 
   const optionsByKey = useMemo(() => {
-    const pipelineOptions = (meta.pipeline || []).map(value => ({ value, label: value }));
     const profileOptions = (meta.profiles || []).map(p => ({
       value: p._id,
       label: p.alias || p.personName || 'Unnamed'
@@ -280,11 +385,19 @@ export default function Applications() {
         .replace(/_/g, ' ')
         .replace(/\b\w/g, char => char.toUpperCase())
     }));
+    const checkResultValues =
+      (Array.isArray(meta.checkResults) && meta.checkResults.length
+        ? meta.checkResults
+        : ['pending', 'ok', 'bad', 'not_perfect']) || [];
+    const checkResultOptions = checkResultValues.map(value => ({
+      value,
+      label: formatCheckResultLabel(value)
+    }));
     return {
-      pipeline: pipelineOptions,
       profiles: profileOptions,
       bidders: bidderOptions,
       checkStatuses: checkStatusOptions,
+      checkResults: checkResultOptions,
       resumes: meta.resumesByProfile || {}
     };
   }, [meta]);
@@ -340,23 +453,89 @@ export default function Applications() {
     [meta.profiles, meta.bidders, resumeLookup, setRowState]
   );
 
-  const handleCheckStatusChange = useCallback(
-    async (row, value) => {
-      if (!row._id || !canCheckApplications || value === row.checkStatus) return;
+  const startCheck = useCallback(
+    async row => {
+      if (!row || !row._id || row.checkStatus !== 'pending') return;
+      if (!canCheckApplications) return;
+      setError(null);
       setRowSaving(row.localId, true);
       try {
-        const updated = await api.patch(`/applications/${row._id}`, { checkStatus: value });
+        const updated = await api.patch(`/applications/${row._id}`, { checkStatus: 'in_review' });
         if (updated.error) throw new Error(updated.error);
         const normalized = normalizeRow(updated);
         setRowState(prev => prev.map(r => (r.localId === row.localId ? normalized : r)));
       } catch (err) {
-        setError(err.message || 'Failed to update check status');
+        setError(err.message || 'Failed to start review');
         await fetchData();
       } finally {
         setRowSaving(row.localId, false);
       }
     },
     [canCheckApplications, fetchData, setRowSaving, setRowState]
+  );
+
+  const completeCheck = useCallback(
+    async rowId => {
+      const current = rowsRef.current.find(r => r.localId === rowId);
+      if (!current || !current._id || current.checkStatus !== 'in_review') return;
+      if (!canCheckApplications) return;
+      if (current.checkedBy && current.checkedBy._id && current.checkedBy._id !== user?.id) {
+        setError('Only the assigned checker can complete this review');
+        return;
+      }
+      const note = (current.checkNote || '').trim();
+      if (!note) {
+        setError('Check note is required before saving');
+        return;
+      }
+      const result = current.checkResult || 'pending';
+      if (result === 'pending') {
+        setError('Select a check result before saving');
+        return;
+      }
+      setError(null);
+      setRowSaving(rowId, true);
+      try {
+        const payload = { checkStatus: 'reviewed', checkResult: result, checkNote: note };
+        const updated = await api.patch(`/applications/${current._id}`, payload);
+        if (updated.error) throw new Error(updated.error);
+        const normalized = normalizeRow(updated);
+        setRowState(prev => prev.map(row => (row.localId === rowId ? normalized : row)));
+      } catch (err) {
+        setError(err.message || 'Failed to complete review');
+        await fetchData();
+      } finally {
+        setRowSaving(rowId, false);
+      }
+    },
+    [canCheckApplications, fetchData, setRowSaving, setRowState, user?.id]
+  );
+
+  const cancelCheck = useCallback(
+    async rowId => {
+      const current = rowsRef.current.find(r => r.localId === rowId);
+      if (!current || !current._id || current.checkStatus !== 'in_review') return;
+      if (!canCheckApplications) return;
+      if (current.checkedBy && current.checkedBy._id && current.checkedBy._id !== user?.id) {
+        setError('Only the assigned checker can cancel this review');
+        return;
+      }
+      setError(null);
+      setRowSaving(rowId, true);
+      try {
+        const payload = { checkStatus: 'pending', checkNote: '' };
+        const updated = await api.patch(`/applications/${current._id}`, payload);
+        if (updated.error) throw new Error(updated.error);
+        const normalized = normalizeRow(updated);
+        setRowState(prev => prev.map(row => (row.localId === rowId ? normalized : row)));
+      } catch (err) {
+        setError(err.message || 'Failed to cancel review');
+        await fetchData();
+      } finally {
+        setRowSaving(rowId, false);
+      }
+    },
+    [canCheckApplications, fetchData, setRowSaving, setRowState, user?.id]
   );
 
   const persistRow = useCallback(
@@ -388,15 +567,17 @@ export default function Applications() {
           setRowSaving(rowId, false);
         }
       } else {
-        const changedKeys = Object.keys(current.__changes || {}).filter(
-          key => key !== 'checkStatus'
+        const changedKeys = Object.keys(current.__changes || {});
+        const allowedKeys = changedKeys.filter(
+          key =>
+            !['checkStatus', 'checkNote', 'checkResult', 'checkedBy', 'checkedAt'].includes(key)
         );
-        if (!changedKeys.length) return;
+        if (!allowedKeys.length) return;
         if (!canEditApplications) return;
 
         setRowSaving(rowId, true);
         try {
-          const payload = buildPayload(current, changedKeys);
+          const payload = buildPayload(current, allowedKeys);
           const updated = await api.patch(`/applications/${current._id}`, payload);
           if (updated.error) throw new Error(updated.error);
           const normalized = normalizeRow(updated);
@@ -421,7 +602,8 @@ export default function Applications() {
         const newRow = makeEmptyRow();
         setRowState(prev => [...prev, newRow]);
         setEditingRowId(newRow.localId);
-        setActiveEditor({ rowId: newRow.localId, key });
+        // Don't set active editor immediately for placeholder rows
+        // Let user click on a field to start editing
         return;
       }
       if (savingRows[row.localId]) return;
@@ -493,18 +675,20 @@ export default function Applications() {
         return row.profile?.alias || '';
       case 'bidderId':
         return row.bidder?.name || '';
-      case 'status':
-        return row.status || '';
       case 'resumeId':
         return row.resume?.title || 'No resume';
       case 'checkStatus':
         return formatCheckStatusLabel(row.checkStatus);
+      case 'checkResult':
+        return formatCheckResultLabel(row.checkResult);
       case 'checkedBy':
         return row.checkedBy?.name || '';
       case 'checkedAt':
         return formatDate(row.checkedAt);
-      case 'notes':
-        return row.notes || '';
+      case 'bidderNote':
+        return row.bidderNote || '';
+      case 'checkNote':
+        return row.checkNote || '';
       case 'jobUrl':
         return row.jobUrl ? (
           <a
@@ -534,20 +718,29 @@ export default function Applications() {
         : row[column.key] ?? '';
     const disableBidderField = column.key === 'bidderId' && !canAssignOtherBidders;
     const disabledBase = savingRows[row.localId] || disableBidderField;
+    
+    const handleBlur = async (e) => {
+      // Only persist for existing rows, not new rows
+      if (!row.isNew) {
+        stopEditing();
+        await persistRow(row.localId);
+      }
+    };
+
     const commonProps = {
-      autoFocus: true,
       className:
         'w-full rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200',
       value,
       disabled: disabledBase,
-      onBlur: async () => {
-        stopEditing();
-        await persistRow(row.localId);
-      },
+      onBlur: handleBlur,
       onKeyDown: async e => {
         if (e.key === 'Enter' && column.type !== 'textarea') {
           e.preventDefault();
           e.currentTarget.blur();
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          stopEditing();
         }
       },
       onChange: e => handleFieldChange(row.localId, column.key, e.target.value)
@@ -611,26 +804,136 @@ export default function Applications() {
   };
 
   const renderCheckStatusCell = row => {
-    const options = optionsByKey.checkStatuses || [];
-    const disabled =
-      !canCheckApplications || !row._id || savingRows[row.localId] || options.length === 0;
-    if (disabled) {
-      return <span>{formatCheckStatusLabel(row.checkStatus)}</span>;
-    }
+    const status = row.checkStatus || 'pending';
+    const label = formatCheckStatusLabel(status);
+    const badgeStyles = {
+      pending: 'bg-slate-100 text-slate-600',
+      in_review: 'bg-indigo-100 text-indigo-700',
+      reviewed: 'bg-emerald-100 text-emerald-700'
+    };
+    const className = badgeStyles[status] || 'bg-slate-100 text-slate-600';
     return (
-      <select
-        className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-        value={row.checkStatus || ''}
-        onChange={e => handleCheckStatusChange(row, e.target.value)}
-        disabled={savingRows[row.localId]}
-      >
-        {options.map(opt => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
+      <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${className}`}>
+        {label}
+      </span>
     );
+  };
+
+  const renderCheckResultCell = row => {
+    const status = row.checkStatus || 'pending';
+    const result = row.checkResult || 'pending';
+    const options = optionsByKey.checkResults || [];
+    const checkerId = row.checkedBy?._id;
+    const isReviewer = status === 'in_review' && (!checkerId || checkerId === user?.id);
+
+    if (isReviewer) {
+      return (
+        <select
+          className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          value={result}
+          onChange={e => handleFieldChange(row.localId, 'checkResult', e.target.value)}
+          disabled={savingRows[row.localId]}
+        >
+          {options.map(opt => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      );
+    }
+
+    return <span>{formatCheckResultLabel(result)}</span>;
+  };
+
+  const renderCheckNoteCell = (row, isSaving) => {
+    const status = row.checkStatus || 'pending';
+    const checkerId = row.checkedBy?._id;
+    const isReviewer = status === 'in_review' && (!checkerId || checkerId === user?.id);
+    const value = row.checkNote || '';
+
+    if (isReviewer) {
+      return (
+        <textarea
+          className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          rows={3}
+          placeholder="Add check notes"
+          value={value}
+          onChange={e => handleFieldChange(row.localId, 'checkNote', e.target.value)}
+          disabled={isSaving}
+        />
+      );
+    }
+
+    return value ? (
+      <span className="whitespace-pre-wrap">{value}</span>
+    ) : (
+      <span className="text-slate-400">No note</span>
+    );
+  };
+
+  const renderCheckControlsCell = (row, isSaving) => {
+    if (!row._id || row.isNew || row.isPlaceholder) {
+      return null;
+    }
+    const status = row.checkStatus || 'pending';
+    const checkerId = row.checkedBy?._id;
+    const isReviewer = status === 'in_review' && (!checkerId || checkerId === user?.id);
+
+    if (status === 'pending') {
+      if (!canCheckApplications) {
+        return <span className="text-slate-400">—</span>;
+      }
+      return (
+        <button
+          type="button"
+          onClick={() => startCheck(row)}
+          disabled={isSaving}
+          className="w-full rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 hover:bg-indigo-500"
+        >
+          {isSaving ? 'Starting...' : 'Check'}
+        </button>
+      );
+    }
+
+    if (status === 'in_review') {
+      if (!isReviewer) {
+        return <span className="text-xs text-slate-400">Assigned to {row.checkedBy?.name || 'checker'}</span>;
+      }
+      const noteReady = (row.checkNote || '').trim().length > 0;
+      const resultReady = (row.checkResult || 'pending') !== 'pending';
+      const canSave = noteReady && resultReady && !isSaving;
+      return (
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => completeCheck(row.localId)}
+            disabled={!canSave}
+            className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 hover:bg-emerald-500"
+          >
+            {isSaving ? 'Saving...' : 'Save Check'}
+          </button>
+          <button
+            type="button"
+            onClick={() => cancelCheck(row.localId)}
+            disabled={isSaving}
+            className="rounded-md border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:text-slate-300 hover:border-amber-200 hover:text-amber-600"
+          >
+            Cancel
+          </button>
+        </div>
+      );
+    }
+
+    if (status === 'reviewed') {
+      return (
+        <span className="text-xs font-semibold text-emerald-600">
+          {formatCheckResultLabel(row.checkResult) || 'Reviewed'}
+        </span>
+      );
+    }
+
+    return <span className="text-slate-400">—</span>;
   };
 
   const renderActionsCell = (row, isSaving) => {
@@ -688,9 +991,7 @@ export default function Applications() {
     <header className="flex items-center justify-between">
       <div>
         <h2 className="text-lg font-semibold text-slate-900">Applications</h2>
-        <p className="text-sm text-slate-500">
-          Manage job submissions, assignments, and pipeline progress.
-        </p>
+        <p className="text-sm text-slate-500">Manage job submissions, assignments, and review workflow.</p>
       </div>
     </header>
   );
@@ -790,6 +1091,27 @@ export default function Applications() {
                         </td>
                       );
                     }
+                    if (column.type === 'checkResult') {
+                      return (
+                        <td key={column.key} className="px-4 py-3 align-top">
+                          {renderCheckResultCell(row)}
+                        </td>
+                      );
+                    }
+                    if (column.type === 'checkNote') {
+                      return (
+                        <td key={column.key} className="px-4 py-3 align-top">
+                          {renderCheckNoteCell(row, isSaving)}
+                        </td>
+                      );
+                    }
+                    if (column.type === 'checkControls') {
+                      return (
+                        <td key={column.key} className="px-4 py-3 align-top">
+                          {renderCheckControlsCell(row, isSaving)}
+                        </td>
+                      );
+                    }
                     const isEditingCell =
                       activeEditor?.rowId === row.localId &&
                       activeEditor?.key === column.key &&
@@ -797,6 +1119,9 @@ export default function Applications() {
                     const fieldEditable =
                       column.type !== 'static' &&
                       column.type !== 'checkStatus' &&
+                      column.type !== 'checkResult' &&
+                      column.type !== 'checkNote' &&
+                      column.type !== 'checkControls' &&
                       column.type !== 'actions' &&
                       (row.isNew ? canAddApplications : inEditMode && canEditApplications) &&
                       !(column.key === 'bidderId' && !canAssignOtherBidders);
