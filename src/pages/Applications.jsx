@@ -169,6 +169,7 @@ export default function Applications() {
   const [savingRows, setSavingRows] = useState({});
 
   const rowsRef = useRef(rows);
+  const editSnapshotsRef = useRef(new Map());
   useEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
@@ -367,8 +368,7 @@ export default function Applications() {
       { key: 'checkedBy', label: 'Checked By', type: 'static' },
       { key: 'checkedAt', label: 'Checked At', type: 'static' },
       { key: 'checkNote', label: 'Check Note', type: 'checkNote' },
-      { key: 'checkControls', label: 'Check', type: 'checkControls' },
-      { key: '_actions', label: '', type: 'actions' }
+      { key: '_actions', label: 'Actions', type: 'actions' }
     ],
     []
   );
@@ -483,14 +483,14 @@ export default function Applications() {
         setError('Only the assigned checker can complete this review');
         return;
       }
-      const note = (current.checkNote || '').trim();
-      if (!note) {
-        setError('Check note is required before saving');
-        return;
-      }
       const result = current.checkResult || 'pending';
       if (result === 'pending') {
         setError('Select a check result before saving');
+        return;
+      }
+      const note = (current.checkNote || '').trim();
+      if (result !== 'ok' && !note) {
+        setError('Check note is required before saving');
         return;
       }
       setError(null);
@@ -541,13 +541,15 @@ export default function Applications() {
   const persistRow = useCallback(
     async rowId => {
       const current = rowsRef.current.find(r => r.localId === rowId);
-      if (!current || current.isPlaceholder) return;
+      if (!current || current.isPlaceholder) return false;
+
+      let success = false;
 
       if (current.isNew) {
-        if (!canAddApplications) return;
+        if (!canAddApplications) return false;
         const hasRequired =
           current.company.trim() && current.roleTitle.trim() && current.profileId;
-        if (!hasRequired) return;
+        if (!hasRequired) return false;
 
         setRowSaving(rowId, true);
         try {
@@ -560,6 +562,7 @@ export default function Applications() {
           );
           setEditingRowId(null);
           setActiveEditor(null);
+          success = true;
         } catch (err) {
           setError(err.message || 'Failed to create application');
           await fetchData();
@@ -572,8 +575,8 @@ export default function Applications() {
           key =>
             !['checkStatus', 'checkNote', 'checkResult', 'checkedBy', 'checkedAt'].includes(key)
         );
-        if (!allowedKeys.length) return;
-        if (!canEditApplications) return;
+        if (!allowedKeys.length) return false;
+        if (!canEditApplications) return false;
 
         setRowSaving(rowId, true);
         try {
@@ -584,6 +587,7 @@ export default function Applications() {
           setRowState(prev =>
             prev.map(row => (row.localId === rowId ? normalized : row))
           );
+          success = true;
         } catch (err) {
           setError(err.message || 'Failed to update application');
           await fetchData();
@@ -591,8 +595,62 @@ export default function Applications() {
           setRowSaving(rowId, false);
         }
       }
+
+      return success;
     },
     [canAddApplications, canEditApplications, fetchData, setRowSaving, setRowState]
+  );
+
+  const exitEditMode = useCallback(
+    rowId => {
+      if (activeEditor?.rowId === rowId) {
+        setActiveEditor(null);
+      }
+      if (editingRowId === rowId) {
+        setEditingRowId(null);
+      }
+      editSnapshotsRef.current.delete(rowId);
+    },
+    [activeEditor, editingRowId]
+  );
+
+  const beginEditMode = useCallback(
+    rowId => {
+      if (!canEditApplications) return;
+      const current = rowsRef.current.find(r => r.localId === rowId);
+      if (current && !current.isNew && !editSnapshotsRef.current.has(rowId)) {
+        editSnapshotsRef.current.set(rowId, JSON.parse(JSON.stringify(current)));
+      }
+      setEditingRowId(rowId);
+      setActiveEditor(null);
+    },
+    [canEditApplications]
+  );
+
+  const handleSaveEdit = useCallback(
+    async rowId => {
+      const ok = await persistRow(rowId);
+      if (ok) {
+        exitEditMode(rowId);
+      }
+    },
+    [exitEditMode, persistRow]
+  );
+
+  const resetEditRow = useCallback(
+    rowId => {
+      const snapshot = editSnapshotsRef.current.get(rowId);
+      if (snapshot) {
+        const restored = JSON.parse(JSON.stringify(snapshot));
+        restored.__changes = {};
+        setRowState(prev =>
+          prev.map(row => (row.localId === rowId ? restored : row))
+        );
+        editSnapshotsRef.current.delete(rowId);
+      }
+      exitEditMode(rowId);
+    },
+    [exitEditMode, setRowState]
   );
 
   const startEditing = useCallback(
@@ -617,13 +675,12 @@ export default function Applications() {
       }
       if (!canEditApplications) return;
       if (editingRowId !== row.localId) return;
-      if (key === 'bidderId' && !canAssignOtherBidders) return;
+      if (key === 'bidderId') return;
       setActiveEditor({ rowId: row.localId, key });
     },
     [
       canAddApplications,
       canEditApplications,
-      canAssignOtherBidders,
       makeEmptyRow,
       savingRows,
       editingRowId,
@@ -646,27 +703,6 @@ export default function Applications() {
       }
     },
     [activeEditor, editingRowId, setRowState]
-  );
-
-  const exitEditMode = useCallback(
-    rowId => {
-      if (activeEditor?.rowId === rowId) {
-        setActiveEditor(null);
-      }
-      if (editingRowId === rowId) {
-        setEditingRowId(null);
-      }
-    },
-    [activeEditor, editingRowId]
-  );
-
-  const beginEditMode = useCallback(
-    rowId => {
-      if (!canEditApplications) return;
-      setEditingRowId(rowId);
-      setActiveEditor(null);
-    },
-    [canEditApplications]
   );
 
   const renderDisplayValue = useCallback((row, column) => {
@@ -716,15 +752,12 @@ export default function Applications() {
         : column.key === 'bidderId'
         ? row.bidderId || ''
         : row[column.key] ?? '';
-    const disableBidderField = column.key === 'bidderId' && !canAssignOtherBidders;
+    const disableBidderField =
+      column.key === 'bidderId' && (!row.isNew || !canAssignOtherBidders);
     const disabledBase = savingRows[row.localId] || disableBidderField;
-    
-    const handleBlur = async (e) => {
-      // Only persist for existing rows, not new rows
-      if (!row.isNew) {
-        stopEditing();
-        await persistRow(row.localId);
-      }
+
+    const handleBlur = () => {
+      stopEditing();
     };
 
     const commonProps = {
@@ -733,7 +766,7 @@ export default function Applications() {
       value,
       disabled: disabledBase,
       onBlur: handleBlur,
-      onKeyDown: async e => {
+      onKeyDown: e => {
         if (e.key === 'Enter' && column.type !== 'textarea') {
           e.preventDefault();
           e.currentTarget.blur();
@@ -823,7 +856,7 @@ export default function Applications() {
     const status = row.checkStatus || 'pending';
     const result = row.checkResult || 'pending';
     const options = optionsByKey.checkResults || [];
-    const checkerId = row.checkedBy?._id;
+    const checkerId = row.checkedBy?._id || row.checkedBy?.id;
     const isReviewer = status === 'in_review' && (!checkerId || checkerId === user?.id);
 
     if (isReviewer) {
@@ -848,7 +881,7 @@ export default function Applications() {
 
   const renderCheckNoteCell = (row, isSaving) => {
     const status = row.checkStatus || 'pending';
-    const checkerId = row.checkedBy?._id;
+    const checkerId = row.checkedBy?._id || row.checkedBy?.id;
     const isReviewer = status === 'in_review' && (!checkerId || checkerId === user?.id);
     const value = row.checkNote || '';
 
@@ -872,121 +905,236 @@ export default function Applications() {
     );
   };
 
-  const renderCheckControlsCell = (row, isSaving) => {
+
+
+
+
+  const renderCheckAction = (row, isSaving) => {
+
     if (!row._id || row.isNew || row.isPlaceholder) {
+
       return null;
+
     }
+
     const status = row.checkStatus || 'pending';
-    const checkerId = row.checkedBy?._id;
+    const checkerId = row.checkedBy?._id || row.checkedBy?.id;
     const isReviewer = status === 'in_review' && (!checkerId || checkerId === user?.id);
 
+
+
     if (status === 'pending') {
+
       if (!canCheckApplications) {
-        return <span className="text-slate-400">—</span>;
+
+        return (
+          <span className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full bg-slate-100 px-3 text-xs font-medium text-slate-400">
+            No check access
+          </span>
+        );
+
       }
+
       return (
+
         <button
           type="button"
           onClick={() => startCheck(row)}
           disabled={isSaving}
-          className="w-full rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 hover:bg-indigo-500"
+          className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isSaving ? 'Starting...' : 'Check'}
         </button>
+
       );
+
     }
 
+
+
     if (status === 'in_review') {
+
       if (!isReviewer) {
-        return <span className="text-xs text-slate-400">Assigned to {row.checkedBy?.name || 'checker'}</span>;
+
+        return (
+          <span className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full bg-slate-100 px-3 text-xs font-medium text-slate-500">
+            Assigned to {row.checkedBy?.name || 'checker'}
+          </span>
+        );
+
       }
-      const noteReady = (row.checkNote || '').trim().length > 0;
-      const resultReady = (row.checkResult || 'pending') !== 'pending';
+      const trimmedNote = (row.checkNote || '').trim();
+      const resultValue = row.checkResult || 'pending';
+      const noteRequired = resultValue !== 'ok';
+      const noteReady = noteRequired ? trimmedNote.length > 0 : true;
+      const resultReady = resultValue !== 'pending';
       const canSave = noteReady && resultReady && !isSaving;
+
+      const saveLabel = isSaving ? 'Saving...' : 'Save';
+
       return (
-        <div className="flex flex-col gap-2">
+
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => completeCheck(row.localId)}
             disabled={!canSave}
-            className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 hover:bg-emerald-500"
+            className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSaving ? 'Saving...' : 'Save Check'}
+            {saveLabel}
           </button>
           <button
             type="button"
             onClick={() => cancelCheck(row.localId)}
             disabled={isSaving}
-            className="rounded-md border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:text-slate-300 hover:border-amber-200 hover:text-amber-600"
+            className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Cancel
+            Reset
           </button>
         </div>
+
       );
+
     }
+
+
 
     if (status === 'reviewed') {
       return (
-        <span className="text-xs font-semibold text-emerald-600">
-          {formatCheckResultLabel(row.checkResult) || 'Reviewed'}
+        <span className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full bg-emerald-50 px-3 text-xs font-semibold text-emerald-600">
+          Checked
         </span>
       );
     }
 
-    return <span className="text-slate-400">—</span>;
+
+
+    return null;
+
   };
 
   const renderActionsCell = (row, isSaving) => {
+
     if (row.isPlaceholder) {
+
       return null;
+
     }
+
     if (row.isNew) {
+
       const hasRequired =
-        (row.company || '').trim() && (row.roleTitle || '').trim() && row.profileId;
+
+        (row.company || '').trim() && (row.roleTitle || '').trim() && row.profileId && row.resumeId;
+
       return (
+
         <div className="flex flex-col gap-2">
+
+          <button
+
+            type="button"
+
+            onClick={() => persistRow(row.localId)}
+
+            disabled={isSaving || !hasRequired}
+
+            className="rounded-lg bg-indigo-600 px-3 py-1 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 hover:bg-indigo-500"
+
+          >
+
+            {isSaving ? 'Saving...' : 'Create'}
+
+          </button>
+
+          <button
+
+            type="button"
+
+            onClick={() => removeTemporaryRow(row.localId)}
+
+            disabled={isSaving}
+
+            className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:text-slate-300 hover:border-indigo-200 hover:text-indigo-600"
+
+          >
+
+            Cancel
+
+          </button>
+
+        </div>
+
+      );
+
+    }
+
+
+
+    const inEditMode = editingRowId === row.localId;
+    const checkerId = row.checkedBy?._id || row.checkedBy?.id;
+    const checkInProgressForUser =
+      row.checkStatus === 'in_review' && (!checkerId || checkerId === user?.id);
+
+    if (inEditMode) {
+      const hasChanges = Object.keys(row.__changes || {}).length > 0;
+      const editSaveLabel = isSaving ? 'Saving...' : 'Save';
+      return (
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => persistRow(row.localId)}
-            disabled={isSaving || !hasRequired}
-            className="rounded-lg bg-indigo-600 px-3 py-1 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 hover:bg-indigo-500"
+            onClick={() => handleSaveEdit(row.localId)}
+            disabled={isSaving || !hasChanges}
+            className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full border border-indigo-200 bg-indigo-50 px-3 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSaving ? 'Saving...' : 'Create'}
+            {editSaveLabel}
           </button>
           <button
             type="button"
-            onClick={() => removeTemporaryRow(row.localId)}
+            onClick={() => resetEditRow(row.localId)}
             disabled={isSaving}
-            className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:text-slate-300 hover:border-indigo-200 hover:text-indigo-600"
+            className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Cancel
+            Reset
           </button>
         </div>
       );
     }
 
-    const inEditMode = editingRowId === row.localId;
+    const checkAction = renderCheckAction(row, isSaving);
+
     if (!canEditApplications) {
+      if (checkAction) {
+        return <div className="flex flex-wrap items-center gap-2">{checkAction}</div>;
+      }
       return <span className="text-xs text-slate-400">View only</span>;
     }
 
+    const showEditButton = !checkInProgressForUser;
+    const editButtonClass =
+      'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-60';
+
     return (
-      <div className="flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={() => (inEditMode ? exitEditMode(row.localId) : beginEditMode(row.localId))}
-          disabled={isSaving}
-          className={`rounded-lg px-3 py-1 text-sm font-semibold shadow-sm transition ${
-            inEditMode
-              ? 'bg-emerald-600 text-white hover:bg-emerald-500 disabled:bg-slate-300'
-              : 'bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-slate-300'
-          }`}
-        >
-          {inEditMode ? 'Done' : 'Edit'}
-        </button>
+      <div className="flex flex-wrap items-center gap-2">
+        {checkAction}
+        {showEditButton ? (
+          <button
+            type="button"
+            onClick={() => beginEditMode(row.localId)}
+            disabled={isSaving}
+            className={`inline-flex h-8 min-w-[88px] items-center justify-center rounded-full border px-3 text-xs font-semibold transition ${editButtonClass}`}
+          >
+            Edit
+          </button>
+        ) : null}
+        {!checkAction && !showEditButton ? (
+          <span className="text-xs text-slate-400">View only</span>
+        ) : null}
       </div>
     );
+
   };
+
   const headerSection = (
     <header className="flex items-center justify-between">
       <div>
@@ -1105,13 +1253,6 @@ export default function Applications() {
                         </td>
                       );
                     }
-                    if (column.type === 'checkControls') {
-                      return (
-                        <td key={column.key} className="px-4 py-3 align-top">
-                          {renderCheckControlsCell(row, isSaving)}
-                        </td>
-                      );
-                    }
                     const isEditingCell =
                       activeEditor?.rowId === row.localId &&
                       activeEditor?.key === column.key &&
@@ -1121,10 +1262,9 @@ export default function Applications() {
                       column.type !== 'checkStatus' &&
                       column.type !== 'checkResult' &&
                       column.type !== 'checkNote' &&
-                      column.type !== 'checkControls' &&
                       column.type !== 'actions' &&
                       (row.isNew ? canAddApplications : inEditMode && canEditApplications) &&
-                      !(column.key === 'bidderId' && !canAssignOtherBidders);
+                      !(column.key === 'bidderId' && (!row.isNew || !canAssignOtherBidders));
 
                     return (
                       <td key={column.key} className="px-4 py-3 align-top">
@@ -1158,3 +1298,8 @@ export default function Applications() {
     </div>
   );
 }
+
+
+
+
+
