@@ -12,10 +12,10 @@ const PROFILE_OPTIONS = [
 const clone = value => JSON.parse(JSON.stringify(value));
 
 const defaultAppPermissions = () => ({
-  manageAll: false,
+  manageAllApplications: false,
   manageApplications: [],
   checkApplications: [],
-  checkAll: false
+  checkAllApplications: false
 });
 
 const toStringIdArray = value => {
@@ -49,22 +49,24 @@ const normalizeAppPermissions = value => {
   if (typeof value === 'string') {
     if (value === 'all') {
       return {
-        manageAll: true,
+        manageAllApplications: true,
         manageApplications: [],
         checkApplications: [],
-        checkAll: false
+        checkAllApplications: false
       };
     }
     return defaultAppPermissions();
   }
   const perms = defaultAppPermissions();
   if (typeof value === 'object' && value) {
-    perms.manageAll = !!(value.manageAll ?? value.viewAll);
+    perms.manageAllApplications = !!(
+      value.manageAllApplications ?? value.manageAll ?? value.viewAll
+    );
     perms.manageApplications = toStringIdArray(
       value.manageApplications ?? value.manageProfiles ?? value.viewProfiles
     );
     perms.checkApplications = toStringIdArray(value.checkApplications ?? value.checkProfiles);
-    perms.checkAll = !!value.checkAll;
+    perms.checkAllApplications = !!(value.checkAllApplications ?? value.checkAll);
   }
   return perms;
 };
@@ -282,7 +284,7 @@ export default function Accounts() {
   const setManageAll = (id, value) => {
     updateApplicationPermissions(id, current => ({
       ...current,
-      manageAll: !!value,
+      manageAllApplications: !!value,
       ...(value ? { manageApplications: [] } : {})
     }));
   };
@@ -290,7 +292,7 @@ export default function Accounts() {
   const setCheckAll = (id, value) => {
     updateApplicationPermissions(id, current => ({
       ...current,
-      checkAll: !!value,
+      checkAllApplications: !!value,
       ...(value ? { checkApplications: [] } : {})
     }));
   };
@@ -367,8 +369,8 @@ export default function Accounts() {
     const currentCheckList = currentApps.checkApplications;
     const originalCheckList = originalApps.checkApplications;
     const applicationsChanged =
-      currentApps.manageAll !== originalApps.manageAll ||
-      currentApps.checkAll !== originalApps.checkAll ||
+      currentApps.manageAllApplications !== originalApps.manageAllApplications ||
+      currentApps.checkAllApplications !== originalApps.checkAllApplications ||
       !arraysEqual(currentManageList, originalManageList) ||
       !arraysEqual(currentCheckList, originalCheckList);
     const profilePermissionChanged =
@@ -379,6 +381,8 @@ export default function Accounts() {
           ? {
               applications: {
                 ...currentApps,
+                manageAllApplications: currentApps.manageAllApplications,
+                checkAllApplications: currentApps.checkAllApplications,
                 manageApplications: [...currentManageList],
                 checkApplications: [...currentCheckList]
               }
@@ -560,13 +564,13 @@ export default function Accounts() {
                           <input
                             type="checkbox"
                             className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                            checked={account.permissions.applications.manageAll}
+                            checked={account.permissions.applications.manageAllApplications}
                             disabled={isSaving || profilesLoading}
                             onChange={event => setManageAll(account.id, event.target.checked)}
                           />
                           <span>Manage all applications</span>
                         </label>
-                        {account.permissions.applications.manageAll ? (
+                        {account.permissions.applications.manageAllApplications ? (
                           <p className="text-xs text-slate-500">
                             Has access to every application. Uncheck to choose specific applications.
                           </p>
@@ -585,13 +589,13 @@ export default function Accounts() {
                           <input
                             type="checkbox"
                             className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                            checked={account.permissions.applications.checkAll}
+                            checked={account.permissions.applications.checkAllApplications}
                             disabled={isSaving || profilesLoading}
                             onChange={event => setCheckAll(account.id, event.target.checked)}
                           />
                           <span>Check all applications</span>
                         </label>
-                        {account.permissions.applications.checkAll ? (
+                        {account.permissions.applications.checkAllApplications ? (
                           <p className="text-xs text-slate-500">
                             Has check access to every application. Uncheck to choose specific applications.
                           </p>

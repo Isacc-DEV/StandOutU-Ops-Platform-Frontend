@@ -65,9 +65,10 @@ const formatDate = value => {
 };
 
 const defaultAppPermissions = () => ({
-  manageAll: false,
+  manageAllApplications: false,
   manageApplications: [],
-  checkApplications: []
+  checkApplications: [],
+  checkAllApplications: false
 });
 
 const toStringIdArray = value => {
@@ -94,17 +95,25 @@ const normalizeAppPermissions = value => {
   if (!value) return defaultAppPermissions();
   if (typeof value === 'string') {
     if (value === 'all') {
-      return { manageAll: true, manageApplications: [], checkApplications: [] };
+      return {
+        manageAllApplications: true,
+        manageApplications: [],
+        checkApplications: [],
+        checkAllApplications: false
+      };
     }
     return defaultAppPermissions();
   }
   if (typeof value === 'object') {
     return {
-      manageAll: !!(value.manageAll ?? value.viewAll),
+      manageAllApplications: !!(
+        value.manageAllApplications ?? value.manageAll ?? value.viewAll
+      ),
       manageApplications: toStringIdArray(
         value.manageApplications ?? value.manageProfiles ?? value.viewProfiles
       ),
-      checkApplications: toStringIdArray(value.checkApplications ?? value.checkProfiles)
+      checkApplications: toStringIdArray(value.checkApplications ?? value.checkProfiles),
+      checkAllApplications: !!(value.checkAllApplications ?? value.checkAll)
     };
   }
   return defaultAppPermissions();
@@ -123,9 +132,10 @@ const areArraysEqual = (a, b) => {
 const isSameAppPermissions = (a, b) => {
   if (a === b) return true;
   if (!a || !b) return false;
-  if (a.manageAll !== b.manageAll) return false;
+  if (a.manageAllApplications !== b.manageAllApplications) return false;
   if (!areArraysEqual(a.manageApplications, b.manageApplications)) return false;
   if (!areArraysEqual(a.checkApplications, b.checkApplications)) return false;
+  if (a.checkAllApplications !== b.checkAllApplications) return false;
   return true;
 };
 
@@ -186,20 +196,20 @@ export default function Applications() {
   const isAdmin = user?.role === 'admin';
   const canManageApplications =
     isAdmin ||
-    appPermissions.manageAll ||
-    appPermissions.checkAll ||
+    appPermissions.manageAllApplications ||
+    appPermissions.checkAllApplications ||
     hasManageApplications ||
     hasCheckApplications;
   const canAddApplications = canManageApplications;
   const canEditApplications = canManageApplications;
-  const canCheckApplications = canManageApplications;
+  const canCheckApplications = appPermissions.checkAllApplications || hasCheckApplications;
   const canAssignOtherBidders =
     capabilities.canAssignOtherBidders ??
-    (isAdmin || appPermissions.manageAll || appPermissions.checkAll);
+    (isAdmin || appPermissions.manageAllApplications || appPermissions.checkAllApplications);
   const canViewApplications =
     isAdmin ||
-    appPermissions.manageAll ||
-    appPermissions.checkAll ||
+    appPermissions.manageAllApplications ||
+    appPermissions.checkAllApplications ||
     hasManageApplications ||
     hasCheckApplications;
 
@@ -927,11 +937,7 @@ export default function Applications() {
 
       if (!canCheckApplications) {
 
-        return (
-          <span className="inline-flex h-8 min-w-[88px] items-center justify-center rounded-full bg-slate-100 px-3 text-xs font-medium text-slate-400">
-            No check access
-          </span>
-        );
+        return null;
 
       }
 
