@@ -2,14 +2,40 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth } from '../hooks/useAuth.js';
 
-const formatContactLine = (contact = {}) =>
-  [
-    [contact.addressLine1, contact.addressLine2].filter(Boolean).join(', '),
-    [contact.city, contact.state, contact.postalCode].filter(Boolean).join(', '),
-    contact.country
-  ]
-    .filter(Boolean)
-    .join(' • ');
+const PROFILE_STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'prestart', label: 'Pre-start' },
+  { value: 'disabled', label: 'Disabled' }
+];
+
+const LINKEDIN_STATUS_OPTIONS = [
+  { value: 'restricted', label: 'Restricted' },
+  { value: 'live_stable', label: 'Live (stable)' },
+  { value: 'live_good', label: 'Live (good)' },
+  { value: 'live_early', label: 'Live (early)' },
+  { value: 'appealing', label: 'Appealing' }
+];
+
+const PROFILE_STATUS_BADGES = {
+  active: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  prestart: 'border-sky-200 bg-sky-50 text-sky-700',
+  disabled: 'border-slate-200 bg-slate-100 text-slate-500',
+  default: 'border-slate-200 bg-slate-50 text-slate-600'
+};
+
+const LINKEDIN_STATUS_BADGES = {
+  restricted: 'border-red-200 bg-red-50 text-red-600',
+  live_stable: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  live_good: 'border-lime-200 bg-lime-50 text-lime-700',
+  live_early: 'border-sky-200 bg-sky-50 text-sky-700',
+  appealing: 'border-amber-200 bg-amber-50 text-amber-700',
+  default: 'border-slate-200 bg-slate-50 text-slate-600'
+};
+
+const optionLabel = (options, value) =>
+  options.find(option => option.value === value)?.label || value || '';
+
+const badgeClasses = (map, value) => map[value] || map.default;
 
 const profileTimestamp = item => {
   const source = item?.updatedAt || item?.createdAt;
@@ -18,7 +44,13 @@ const profileTimestamp = item => {
 };
 
 const ProfileListItem = ({ profile, selected, onSelect }) => {
-  const fullName = `${profile.firstName} ${profile.lastName}`.trim();
+  const fullName = `${profile.firstName} ${profile.lastName}`.trim() || profile.alias;
+  const profileStatusLabel = optionLabel(PROFILE_STATUS_OPTIONS, profile.status);
+  const profileStatusClass = badgeClasses(PROFILE_STATUS_BADGES, profile.status);
+  const linkedinStatusLabel = optionLabel(LINKEDIN_STATUS_OPTIONS, profile.linkedinStatus);
+  const linkedinStatusClass = badgeClasses(LINKEDIN_STATUS_BADGES, profile.linkedinStatus);
+  const hasLinkedin = Boolean(profile.linkedinUrl);
+
   return (
     <button
       type="button"
@@ -30,21 +62,28 @@ const ProfileListItem = ({ profile, selected, onSelect }) => {
           : 'border-slate-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/60'
       ].join(' ')}
     >
-      <p className="text-sm font-semibold text-slate-900">{fullName || profile.alias}</p>
-      <p className="text-xs text-slate-500">{profile.contact?.email || 'No email on file'}</p>
-      {profile.tags?.length ? (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {profile.tags.map(tag => (
-            <span
-              key={tag}
-              className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-500"
-            >
-              {tag}
-            </span>
-          ))}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900">{fullName}</p>
+          <p className="truncate text-xs text-slate-500">{profile.email || 'No email on file'}</p>
         </div>
-      ) : null}
-      <p className="mt-2 text-[11px] uppercase tracking-wide text-slate-400">
+        <span
+          className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${profileStatusClass}`}
+        >
+          {profileStatusLabel}
+        </span>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <p className="truncate text-xs text-slate-500">
+          {hasLinkedin ? profile.linkedinUrl : 'No LinkedIn'}
+        </p>
+        <span
+          className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${linkedinStatusClass}`}
+        >
+          {linkedinStatusLabel}
+        </span>
+      </div>
+      <p className="mt-3 text-[11px] uppercase tracking-wide text-slate-400">
         Updated {new Date(profile.updatedAt).toLocaleDateString()}
       </p>
     </button>
@@ -93,18 +132,10 @@ export default function Profiles() {
       alias: '',
       firstName: '',
       lastName: '',
-      summary: '',
-      tags: '',
-      links: '',
       email: '',
-      secondaryEmail: '',
-      phone: '',
-      addressLine1: '',
-      addressLine2: '',
-      city: '',
-      state: '',
-      postalCode: '',
-      country: ''
+      status: PROFILE_STATUS_OPTIONS[0].value,
+      linkedinUrl: '',
+      linkedinStatus: LINKEDIN_STATUS_OPTIONS[0].value
     }),
     []
   );
@@ -127,34 +158,23 @@ export default function Profiles() {
     alias: form.alias.trim(),
     firstName: form.firstName.trim(),
     lastName: form.lastName.trim(),
-    summary: form.summary.trim(),
-    tags: form.tags
-      .split(',')
-      .map(tag => tag.trim())
-      .filter(Boolean),
-    links: form.links
-      .split('\n')
-      .map(link => link.trim())
-      .filter(Boolean),
-    contact: {
-      email: form.email.trim(),
-      secondaryEmail: form.secondaryEmail.trim(),
-      phone: form.phone.trim(),
-      addressLine1: form.addressLine1.trim(),
-      addressLine2: form.addressLine2.trim(),
-      city: form.city.trim(),
-      state: form.state.trim(),
-      postalCode: form.postalCode.trim(),
-      country: form.country.trim()
-    }
+    email: form.email.trim(),
+    status: form.status,
+    linkedinUrl: form.linkedinUrl.trim(),
+    linkedinStatus: form.linkedinStatus
   });
 
   const createProfile = async e => {
     e.preventDefault();
     if (!canEditProfiles || creatingProfile) return;
     setCreateError(null);
-    if (!createForm.alias.trim() || !createForm.firstName.trim() || !createForm.lastName.trim()) {
-      setCreateError('Alias, first name, and last name are required.');
+    if (
+      !createForm.alias.trim() ||
+      !createForm.firstName.trim() ||
+      !createForm.lastName.trim() ||
+      !createForm.email.trim()
+    ) {
+      setCreateError('Alias, first name, last name, and email are required.');
       return;
     }
 
@@ -584,149 +604,103 @@ export default function Profiles() {
             )}
           </div>
           {showCreateForm && canEditProfiles && (
-            <form className="mt-4 space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4" onSubmit={createProfile}>
+            <form
+              className="mt-4 space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4"
+              onSubmit={createProfile}
+            >
               <div className="grid grid-cols-1 gap-3">
-                <FieldLabel label="Alias">
+              <FieldLabel label="Alias">
+                <input
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  value={createForm.alias}
+                  onChange={e => handleCreateField('alias', e.target.value)}
+                  placeholder="Internal nickname (required)"
+                />
+              </FieldLabel>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <FieldLabel label="First name">
                   <input
                     className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    value={createForm.alias}
-                    onChange={e => handleCreateField('alias', e.target.value)}
-                    placeholder="Internal nickname (required)"
+                    value={createForm.firstName}
+                    onChange={e => handleCreateField('firstName', e.target.value)}
+                    placeholder="Required"
                   />
                 </FieldLabel>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <FieldLabel label="First name">
-                    <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      value={createForm.firstName}
-                      onChange={e => handleCreateField('firstName', e.target.value)}
-                      placeholder="Required"
-                    />
-                  </FieldLabel>
-                  <FieldLabel label="Last name">
-                    <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      value={createForm.lastName}
-                      onChange={e => handleCreateField('lastName', e.target.value)}
-                      placeholder="Required"
-                    />
-                  </FieldLabel>
-                </div>
-                <FieldLabel label="Summary">
-                  <textarea
-                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    value={createForm.summary}
-                    onChange={e => handleCreateField('summary', e.target.value)}
-                    placeholder="One or two sentences about the profile"
-                    rows={2}
-                  />
-                </FieldLabel>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <FieldLabel label="Primary email">
-                    <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      value={createForm.email}
-                      onChange={e => handleCreateField('email', e.target.value)}
-                      placeholder="person@mail.com"
-                    />
-                  </FieldLabel>
-                  <FieldLabel label="Secondary email">
-                    <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      value={createForm.secondaryEmail}
-                      onChange={e => handleCreateField('secondaryEmail', e.target.value)}
-                      placeholder="Optional"
-                    />
-                  </FieldLabel>
-                </div>
-                <FieldLabel label="Phone">
+                <FieldLabel label="Last name">
                   <input
                     className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    value={createForm.phone}
-                    onChange={e => handleCreateField('phone', e.target.value)}
-                    placeholder="+1 (555) 123-4567"
+                    value={createForm.lastName}
+                    onChange={e => handleCreateField('lastName', e.target.value)}
+                    placeholder="Required"
                   />
-                </FieldLabel>
-                <FieldLabel label="Tags (comma separated)">
-                  <input
-                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    value={createForm.tags}
-                    onChange={e => handleCreateField('tags', e.target.value)}
-                    placeholder="frontend, react, contract"
-                  />
-                </FieldLabel>
-                <FieldLabel label="Links (one per line)">
-                  <textarea
-                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    value={createForm.links}
-                    onChange={e => handleCreateField('links', e.target.value)}
-                    placeholder="https://linkedin.com/in/example"
-                    rows={2}
-                  />
-                </FieldLabel>
-                <FieldLabel label="Address">
-                  <div className="space-y-2">
-                    <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      value={createForm.addressLine1}
-                      onChange={e => handleCreateField('addressLine1', e.target.value)}
-                      placeholder="Address line 1"
-                    />
-                    <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      value={createForm.addressLine2}
-                      onChange={e => handleCreateField('addressLine2', e.target.value)}
-                      placeholder="Address line 2"
-                    />
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <input
-                        className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        value={createForm.city}
-                        onChange={e => handleCreateField('city', e.target.value)}
-                        placeholder="City"
-                      />
-                      <input
-                        className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        value={createForm.state}
-                        onChange={e => handleCreateField('state', e.target.value)}
-                        placeholder="State"
-                      />
-                      <input
-                        className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        value={createForm.postalCode}
-                        onChange={e => handleCreateField('postalCode', e.target.value)}
-                        placeholder="Postal code"
-                      />
-                    </div>
-                    <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      value={createForm.country}
-                      onChange={e => handleCreateField('country', e.target.value)}
-                      placeholder="Country"
-                    />
-                  </div>
                 </FieldLabel>
               </div>
-              {createError && <p className="text-sm text-red-600">{createError}</p>}
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={creatingProfile}
-                  className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 hover:bg-indigo-500"
-                >
-                  {creatingProfile ? 'Creating...' : 'Create Profile'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetCreateForm();
-                    setShowCreateForm(false);
-                  }}
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600"
-                >
-                  Cancel
-                </button>
+              <FieldLabel label="Email">
+                <input
+                  type="email"
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  value={createForm.email}
+                  onChange={e => handleCreateField('email', e.target.value)}
+                  placeholder="person@mail.com"
+                />
+              </FieldLabel>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <FieldLabel label="Profile status">
+                  <select
+                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    value={createForm.status}
+                    onChange={e => handleCreateField('status', e.target.value)}
+                  >
+                    {PROFILE_STATUS_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="LinkedIn status">
+                  <select
+                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    value={createForm.linkedinStatus}
+                    onChange={e => handleCreateField('linkedinStatus', e.target.value)}
+                  >
+                    {LINKEDIN_STATUS_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </FieldLabel>
               </div>
+              <FieldLabel label="LinkedIn URL">
+                <input
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  value={createForm.linkedinUrl}
+                  onChange={e => handleCreateField('linkedinUrl', e.target.value)}
+                  placeholder="https://linkedin.com/in/username (optional)"
+                />
+              </FieldLabel>
+            </div>
+            {createError && <p className="text-sm text-red-600">{createError}</p>}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                disabled={creatingProfile}
+                className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {creatingProfile ? 'Creating...' : 'Create Profile'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  resetCreateForm();
+                  setShowCreateForm(false);
+                }}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600"
+              >
+                Cancel
+              </button>
+            </div>
             </form>
           )}
           {profilesLoading ? (
@@ -757,7 +731,7 @@ export default function Profiles() {
           ) : detailError ? (
             <p className="text-sm text-red-600">{detailError}</p>
           ) : profileDetail ? (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-400">Profile</p>
                 <h2 className="text-2xl font-semibold text-slate-900">
@@ -765,39 +739,67 @@ export default function Profiles() {
                 </h2>
                 <p className="text-sm text-slate-500">{profileDetail.alias}</p>
               </div>
-              {profileDetail.summary && (
-                <p className="text-sm text-slate-600">{profileDetail.summary}</p>
-              )}
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-                  <SectionHeader title="Contact" />
-                  <div className="mt-3 space-y-2 text-sm text-slate-600">
-                    {profileDetail.contact?.email && <p>{profileDetail.contact.email}</p>}
-                    {profileDetail.contact?.secondaryEmail && <p>{profileDetail.contact.secondaryEmail}</p>}
-                    {profileDetail.contact?.phone && <p>{profileDetail.contact.phone}</p>}
-                    {formatContactLine(profileDetail.contact) && (
-                      <p>{formatContactLine(profileDetail.contact)}</p>
-                    )}
+                  <SectionHeader title="Basics" />
+                  <div className="mt-3 space-y-3 text-sm text-slate-600">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-400">Email</p>
+                      {profileDetail.email ? (
+                        <a
+                          href={`mailto:${profileDetail.email}`}
+                          className="text-indigo-600 hover:underline"
+                        >
+                          {profileDetail.email}
+                        </a>
+                      ) : (
+                        <p className="text-slate-500">No email on file</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-400">Profile status</p>
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${badgeClasses(PROFILE_STATUS_BADGES, profileDetail.status)}`}
+                      >
+                        {optionLabel(PROFILE_STATUS_OPTIONS, profileDetail.status)}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-400">Updated</p>
+                      <p>
+                        {profileDetail.updatedAt
+                          ? new Date(profileDetail.updatedAt).toLocaleString()
+                          : 'Recently updated'}
+                      </p>
+                    </div>
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-                  <SectionHeader title="Links" />
-                  <div className="mt-3 space-y-2 text-sm text-indigo-600">
-                    {profileDetail.links?.length ? (
-                      profileDetail.links.map(link => (
+                  <SectionHeader title="LinkedIn" />
+                  <div className="mt-3 space-y-3 text-sm text-slate-600">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-400">Status</p>
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${badgeClasses(LINKEDIN_STATUS_BADGES, profileDetail.linkedinStatus)}`}
+                      >
+                        {optionLabel(LINKEDIN_STATUS_OPTIONS, profileDetail.linkedinStatus)}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-400">URL</p>
+                      {profileDetail.linkedinUrl ? (
                         <a
-                          key={link}
-                          href={link}
+                          href={profileDetail.linkedinUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="block truncate hover:underline"
+                          className="text-indigo-600 hover:underline"
                         >
-                          {link}
+                          {profileDetail.linkedinUrl}
                         </a>
-                      ))
-                    ) : (
-                      <p className="text-slate-500">No links added.</p>
-                    )}
+                      ) : (
+                        <p className="text-slate-500">No LinkedIn</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -806,52 +808,67 @@ export default function Profiles() {
             <p className="text-sm text-slate-500">Select a profile to view details.</p>
           )}
         </div>
-
         <div className="rounded-2xl border border-slate-200 bg-white p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-base font-semibold text-slate-900">Resumes</h3>
-            <div className="flex flex-wrap items-center gap-2">
-              {profileResumes.map(resume => {
-                const isActive =
-                  (selectedResume?._id || selectedResume?.id) === (resume._id || resume.id);
-                return (
+          <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-base font-semibold text-slate-900">Resumes</h3>
+                {canEditProfiles && (
                   <button
                     type="button"
-                    key={resume._id || resume.id || `resume-${resume.title || 'untitled'}`}
-                    onClick={() => handleResumeSelect(resume)}
-                    className={[
-                      'rounded-lg border px-3 py-1.5 text-left text-sm transition',
-                      isActive
-                        ? 'border-indigo-400 bg-indigo-50 text-indigo-700 shadow-sm'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'
-                    ].join(' ')}
+                    onClick={() => toggleResumeForm('create')}
+                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    disabled={!profileDetail}
                   >
-                    <span className="block font-semibold">
-                      {resume.title || 'Untitled resume'}
-                    </span>
-                    {resume.note && (
-                      <span className="mt-0.5 block truncate text-xs text-slate-500">
-                        {resume.note}
-                      </span>
-                    )}
+                    {formMode === 'create' ? 'Close Upload' : 'Upload Resume'}
                   </button>
-                );
-              })}
-              {canEditProfiles && (
-                <button
-                  type="button"
-                  onClick={() => toggleResumeForm('create')}
-                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  disabled={!profileDetail}
-                >
-                  {formMode === 'create' ? 'Close Upload' : 'Upload Resume'}
-                </button>
-              )}
+                )}
+              </div>
+              <div className="space-y-2">
+                {profileDetail ? (
+                  profileResumes.length ? (
+                    profileResumes.map(resume => {
+                      const isActive =
+                        (selectedResume?._id || selectedResume?.id) === (resume._id || resume.id);
+                      return (
+                        <button
+                          type="button"
+                          key={resume._id || resume.id || `resume-${resume.title || 'untitled'}`}
+                          onClick={() => handleResumeSelect(resume)}
+                          className={[
+                            'w-full rounded-lg border px-3 py-2 text-left text-sm transition',
+                            isActive
+                              ? 'border-indigo-400 bg-indigo-50 text-indigo-700 shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'
+                          ].join(' ')}
+                        >
+                          <span className="block font-semibold">
+                            {resume.title || 'Untitled resume'}
+                          </span>
+                          {resume.note && (
+                            <span className="mt-0.5 block truncate text-xs text-slate-500">
+                              {resume.note}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <p className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-sm text-slate-500">
+                      No resumes yet.
+                    </p>
+                  )
+                ) : (
+                  <p className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-sm text-slate-500">
+                    Select a profile to view resumes.
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="mt-4 space-y-4">
-            {renderResumeForm()}
-            {renderResumeSection()}
+            <div className="space-y-4">
+              {renderResumeForm()}
+              {renderResumeSection()}
+            </div>
           </div>
         </div>
       </section>

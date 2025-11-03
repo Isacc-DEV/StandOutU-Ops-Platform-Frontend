@@ -191,7 +191,7 @@ export default function Accounts() {
           const value = profile._id || profile.id;
           if (!value) return null;
           const fullName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-          const label = profile.alias || fullName || profile.contact?.email || 'Unnamed profile';
+          const label = profile.alias || fullName || profile.email || 'Unnamed profile';
           return { value: value.toString(), label };
         })
         .filter(Boolean)
