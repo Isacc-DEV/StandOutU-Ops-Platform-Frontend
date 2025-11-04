@@ -26,9 +26,6 @@ export default function App() {
             <Route path="/applications/:id" element={<ApplicationDetail />} />
             <Route path="/profiles" element={<Profiles />} />
             <Route path="/profiles/:id" element={<ProfileDetail />} />
-            <Route path="/resumes" element={<Resumes />} />
-            <Route path="/schedules" element={<Schedules />} />
-            <Route path="/interviews" element={<Interviews />} />
             <Route path="/accounts" element={<Accounts />} />
           </Route>
         </Routes>

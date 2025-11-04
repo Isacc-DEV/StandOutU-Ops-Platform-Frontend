@@ -32,9 +32,6 @@ export default function Nav() {
             <NavLink className={classes} to="/dashboard">Dashboard</NavLink>
             <NavLink className={classes} to="/applications">Applications</NavLink>
             <NavLink className={classes} to="/profiles">Profiles</NavLink>
-            <NavLink className={classes} to="/resumes">Resumes</NavLink>
-            <NavLink className={classes} to="/interviews">Interviews</NavLink>
-            <NavLink className={classes} to="/schedules">Schedules</NavLink>
             {/* {console.log(user?.role)} */}
             {user?.role === 'admin' && (
               <NavLink className={classes} to="/accounts">Manage Accounts</NavLink>

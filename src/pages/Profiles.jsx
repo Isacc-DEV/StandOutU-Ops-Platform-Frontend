@@ -127,6 +127,15 @@ export default function Profiles() {
   const [resumeFile, setResumeFile] = useState(null);
   const [resumeRequestError, setResumeRequestError] = useState(null);
   const [resumeRequestPending, setResumeRequestPending] = useState(false);
+  const [detailEditingField, setDetailEditingField] = useState(null);
+  const [detailForm, setDetailForm] = useState({
+    email: '',
+    status: PROFILE_STATUS_OPTIONS[0].value,
+    linkedinStatus: LINKEDIN_STATUS_OPTIONS[0].value,
+    linkedinUrl: ''
+  });
+  const [detailSaving, setDetailSaving] = useState(false);
+  const [detailSaveError, setDetailSaveError] = useState(null);
   const initialCreateForm = useMemo(
     () => ({
       alias: '',
@@ -152,6 +161,110 @@ export default function Profiles() {
     setCreateForm({ ...initialCreateForm });
     setCreateError(null);
     setCreatingProfile(false);
+  };
+
+  const startDetailEditing = field => {
+    if (!canEditProfiles || detailSaving || !profileDetail) return;
+    setDetailSaveError(null);
+    setDetailEditingField(field);
+    setDetailForm({
+      email: profileDetail.email || '',
+      status: profileDetail.status || PROFILE_STATUS_OPTIONS[0].value,
+      linkedinStatus: profileDetail.linkedinStatus || LINKEDIN_STATUS_OPTIONS[0].value,
+      linkedinUrl: profileDetail.linkedinUrl || ''
+    });
+  };
+
+  const cancelDetailEditing = () => {
+    if (detailSaving) return;
+    if (profileDetail) {
+      setDetailForm({
+        email: profileDetail.email || '',
+        status: profileDetail.status || PROFILE_STATUS_OPTIONS[0].value,
+        linkedinStatus: profileDetail.linkedinStatus || LINKEDIN_STATUS_OPTIONS[0].value,
+        linkedinUrl: profileDetail.linkedinUrl || ''
+      });
+    }
+    setDetailEditingField(null);
+    setDetailSaveError(null);
+  };
+
+  const handleDetailFieldChange = (field, value) => {
+    if (detailSaveError) setDetailSaveError(null);
+    setDetailForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const saveDetailField = async field => {
+    if (!canEditProfiles || detailSaving || !profileDetail) return;
+    const payload = {};
+    if (field === 'email') {
+      const email = detailForm.email.trim();
+      if (!email) {
+        setDetailSaveError('Email is required.');
+        return;
+      }
+      if (email === (profileDetail.email || '')) {
+        setDetailEditingField(null);
+        return;
+      }
+      payload.email = email;
+    } else if (field === 'status') {
+      if (detailForm.status === (profileDetail.status || '')) {
+        setDetailEditingField(null);
+        return;
+      }
+      payload.status = detailForm.status;
+    } else if (field === 'linkedinStatus') {
+      if (detailForm.linkedinStatus === (profileDetail.linkedinStatus || '')) {
+        setDetailEditingField(null);
+        return;
+      }
+      payload.linkedinStatus = detailForm.linkedinStatus;
+    } else if (field === 'linkedinUrl') {
+      const url = detailForm.linkedinUrl.trim();
+      if (url === (profileDetail.linkedinUrl || '')) {
+        setDetailEditingField(null);
+        return;
+      }
+      payload.linkedinUrl = url;
+    } else {
+      return;
+    }
+
+    setDetailSaving(true);
+    setDetailSaveError(null);
+
+    const profileId = profileDetail._id || profileDetail.id;
+    const response = await api.patch(`/profiles/${profileId}`, payload);
+    if (response?.error) {
+      setDetailSaveError(response.error);
+      setDetailSaving(false);
+      return;
+    }
+
+    const updated = response || {};
+    setProfileDetail(prev =>
+      prev ? { ...prev, ...updated, resumes: prev.resumes || [] } : prev
+    );
+    setProfiles(prev => {
+      const next = prev.map(item => {
+        const itemId = item._id || item.id;
+        if (itemId === profileId) {
+          return { ...item, ...updated };
+        }
+        return item;
+      });
+      return next.sort((a, b) => profileTimestamp(b) - profileTimestamp(a));
+    });
+    setSelectedProfile(prev => {
+      if (!prev) return prev;
+      const prevId = prev._id || prev.id;
+      if (prevId !== profileId) return prev;
+      return { ...prev, ...updated };
+    });
+
+    setDetailEditingField(null);
+    setDetailSaving(false);
   };
 
   const buildProfilePayload = form => ({
@@ -245,6 +358,27 @@ export default function Profiles() {
     };
     loadDetail();
   }, [selectedProfile]);
+
+  useEffect(() => {
+    if (profileDetail) {
+      setDetailForm({
+        email: profileDetail.email || '',
+        status: profileDetail.status || PROFILE_STATUS_OPTIONS[0].value,
+        linkedinStatus: profileDetail.linkedinStatus || LINKEDIN_STATUS_OPTIONS[0].value,
+        linkedinUrl: profileDetail.linkedinUrl || ''
+      });
+    } else {
+      setDetailForm({
+        email: '',
+        status: PROFILE_STATUS_OPTIONS[0].value,
+        linkedinStatus: LINKEDIN_STATUS_OPTIONS[0].value,
+        linkedinUrl: ''
+      });
+    }
+    setDetailEditingField(null);
+    setDetailSaveError(null);
+    setDetailSaving(false);
+  }, [profileDetail]);
 
   useEffect(() => {
     let objectUrl = '';
@@ -743,26 +877,130 @@ export default function Profiles() {
                 <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                   <SectionHeader title="Basics" />
                   <div className="mt-3 space-y-3 text-sm text-slate-600">
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-slate-400">Email</p>
-                      {profileDetail.email ? (
+                    <div
+                      onDoubleClick={() => startDetailEditing('email')}
+                      className={`rounded-lg border border-transparent p-2 transition ${
+                        canEditProfiles ? 'hover:border-indigo-200' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">Email</p>
+                        {canEditProfiles && detailEditingField !== 'email' && (
+                          <button
+                            type="button"
+                            onClick={() => startDetailEditing('email')}
+                            className="text-xs font-semibold uppercase text-indigo-600 hover:text-indigo-500"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      {detailEditingField === 'email' ? (
+                        <div className="mt-2 space-y-2">
+                          <input
+                            type="email"
+                            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            value={detailForm.email}
+                            onChange={e => handleDetailFieldChange('email', e.target.value)}
+                            disabled={detailSaving}
+                            placeholder="person@mail.com"
+                          />
+                          {detailSaveError && detailEditingField === 'email' ? (
+                            <p className="text-xs text-red-600">{detailSaveError}</p>
+                          ) : null}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => saveDetailField('email')}
+                              disabled={detailSaving}
+                              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold uppercase text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+                            >
+                              {detailSaving ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelDetailEditing}
+                              disabled={detailSaving}
+                              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold uppercase text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : profileDetail.email ? (
                         <a
                           href={`mailto:${profileDetail.email}`}
-                          className="text-indigo-600 hover:underline"
+                          className="mt-2 inline-block text-sm text-indigo-600 hover:underline"
                         >
                           {profileDetail.email}
                         </a>
                       ) : (
-                        <p className="text-slate-500">No email on file</p>
+                        <p className="mt-2 text-sm text-slate-500">No email on file</p>
                       )}
                     </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-slate-400">Profile status</p>
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${badgeClasses(PROFILE_STATUS_BADGES, profileDetail.status)}`}
-                      >
-                        {optionLabel(PROFILE_STATUS_OPTIONS, profileDetail.status)}
-                      </span>
+                    <div
+                      onDoubleClick={() => startDetailEditing('status')}
+                      className={`rounded-lg border border-transparent p-2 transition ${
+                        canEditProfiles ? 'hover:border-indigo-200' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">
+                          Profile status
+                        </p>
+                        {canEditProfiles && detailEditingField !== 'status' && (
+                          <button
+                            type="button"
+                            onClick={() => startDetailEditing('status')}
+                            className="text-xs font-semibold uppercase text-indigo-600 hover:text-indigo-500"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      {detailEditingField === 'status' ? (
+                        <div className="mt-2 space-y-2">
+                          <select
+                            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            value={detailForm.status}
+                            onChange={e => handleDetailFieldChange('status', e.target.value)}
+                            disabled={detailSaving}
+                          >
+                            {PROFILE_STATUS_OPTIONS.map(option => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          {detailSaveError && detailEditingField === 'status' ? (
+                            <p className="text-xs text-red-600">{detailSaveError}</p>
+                          ) : null}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => saveDetailField('status')}
+                              disabled={detailSaving}
+                              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold uppercase text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+                            >
+                              {detailSaving ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelDetailEditing}
+                              disabled={detailSaving}
+                              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold uppercase text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span
+                          className={`mt-2 inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${badgeClasses(PROFILE_STATUS_BADGES, profileDetail.status)}`}
+                        >
+                          {optionLabel(PROFILE_STATUS_OPTIONS, profileDetail.status)}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs uppercase tracking-wide text-slate-400">Updated</p>
@@ -777,27 +1015,128 @@ export default function Profiles() {
                 <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                   <SectionHeader title="LinkedIn" />
                   <div className="mt-3 space-y-3 text-sm text-slate-600">
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-slate-400">Status</p>
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${badgeClasses(LINKEDIN_STATUS_BADGES, profileDetail.linkedinStatus)}`}
-                      >
-                        {optionLabel(LINKEDIN_STATUS_OPTIONS, profileDetail.linkedinStatus)}
-                      </span>
+                    <div
+                      onDoubleClick={() => startDetailEditing('linkedinStatus')}
+                      className={`rounded-lg border border-transparent p-2 transition ${
+                        canEditProfiles ? 'hover:border-indigo-200' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">Status</p>
+                        {canEditProfiles && detailEditingField !== 'linkedinStatus' && (
+                          <button
+                            type="button"
+                            onClick={() => startDetailEditing('linkedinStatus')}
+                            className="text-xs font-semibold uppercase text-indigo-600 hover:text-indigo-500"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      {detailEditingField === 'linkedinStatus' ? (
+                        <div className="mt-2 space-y-2">
+                          <select
+                            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            value={detailForm.linkedinStatus}
+                            onChange={e => handleDetailFieldChange('linkedinStatus', e.target.value)}
+                            disabled={detailSaving}
+                          >
+                            {LINKEDIN_STATUS_OPTIONS.map(option => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          {detailSaveError && detailEditingField === 'linkedinStatus' ? (
+                            <p className="text-xs text-red-600">{detailSaveError}</p>
+                          ) : null}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => saveDetailField('linkedinStatus')}
+                              disabled={detailSaving}
+                              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold uppercase text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+                            >
+                              {detailSaving ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelDetailEditing}
+                              disabled={detailSaving}
+                              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold uppercase text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span
+                          className={`mt-2 inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${badgeClasses(LINKEDIN_STATUS_BADGES, profileDetail.linkedinStatus)}`}
+                        >
+                          {optionLabel(LINKEDIN_STATUS_OPTIONS, profileDetail.linkedinStatus)}
+                        </span>
+                      )}
                     </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-slate-400">URL</p>
-                      {profileDetail.linkedinUrl ? (
+                    <div
+                      onDoubleClick={() => startDetailEditing('linkedinUrl')}
+                      className={`rounded-lg border border-transparent p-2 transition ${
+                        canEditProfiles ? 'hover:border-indigo-200' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">URL</p>
+                        {canEditProfiles && detailEditingField !== 'linkedinUrl' && (
+                          <button
+                            type="button"
+                            onClick={() => startDetailEditing('linkedinUrl')}
+                            className="text-xs font-semibold uppercase text-indigo-600 hover:text-indigo-500"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      {detailEditingField === 'linkedinUrl' ? (
+                        <div className="mt-2 space-y-2">
+                          <input
+                            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            value={detailForm.linkedinUrl}
+                            onChange={e => handleDetailFieldChange('linkedinUrl', e.target.value)}
+                            disabled={detailSaving}
+                            placeholder="https://linkedin.com/in/username"
+                          />
+                          {detailSaveError && detailEditingField === 'linkedinUrl' ? (
+                            <p className="text-xs text-red-600">{detailSaveError}</p>
+                          ) : null}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => saveDetailField('linkedinUrl')}
+                              disabled={detailSaving}
+                              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold uppercase text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+                            >
+                              {detailSaving ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelDetailEditing}
+                              disabled={detailSaving}
+                              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold uppercase text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : profileDetail.linkedinUrl ? (
                         <a
                           href={profileDetail.linkedinUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-indigo-600 hover:underline"
+                          className="mt-2 inline-block text-sm text-indigo-600 hover:underline"
                         >
                           {profileDetail.linkedinUrl}
                         </a>
                       ) : (
-                        <p className="text-slate-500">No LinkedIn</p>
+                        <p className="mt-2 text-sm text-slate-500">No LinkedIn</p>
                       )}
                     </div>
                   </div>
